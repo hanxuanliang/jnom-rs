@@ -4,7 +4,7 @@ use std::ops::Range;
 use error::JError;
 use indexmap::IndexMap;
 use logos::{Lexer, Logos};
-use nom::Slice;
+use nom::{multi::separated_list0, sequence::tuple, Slice};
 
 mod error;
 
@@ -125,7 +125,7 @@ impl std::fmt::Display for JsonTokenKind {
 pub type Input<'a> = &'a [JsonToken<'a>];
 pub type IResult<'a, Output> = nom::IResult<Input<'a>, Output, error::JError>;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum JsonExpr<'a> {
     Object(Box<IndexMap<&'a str, JsonExpr<'a>>>),
     Array(Vec<JsonExpr<'a>>),
@@ -133,6 +133,15 @@ enum JsonExpr<'a> {
     Number(f64),
     Boolean(bool),
     Null,
+}
+
+fn parse_array(i: Input) -> IResult<JsonExpr> {
+    tuple((
+        match_token(JsonTokenKind::OpenBracket),
+        separated_list0(match_token(JsonTokenKind::Comma), parse_string),
+        match_token(JsonTokenKind::CloseBracket),
+    ))(i)
+    .map(|(i, (_, array_var, _))| (i, JsonExpr::Array(array_var)))
 }
 
 fn parse_string(i: Input) -> IResult<JsonExpr> {
@@ -167,6 +176,8 @@ fn match_text(text: &'static str) -> impl Fn(Input) -> IResult<&JsonToken> {
 
 #[cfg(test)]
 mod tests {
+    use crate::JsonExpr;
+
     #[test]
     // cargo test --package jnom-rs --lib -- tests::it_tokenize --exact --nocapture
     fn it_tokenize() {
@@ -193,6 +204,21 @@ mod tests {
         let tokens = super::tokenize(source);
         // println!("{:#?}", tokens);
         let result = super::parse_string(&tokens);
-        println!("{:#?}", result.unwrap().1);
+        let string_var: crate::JsonExpr<'_> = result.unwrap().1;
+        assert_eq!(string_var, JsonExpr::String("abc"));
+    }
+
+    #[test]
+    fn it_parse_array() {
+        let source = r#"["abc", "def"]"#;
+        let tokens = super::tokenize(source);
+        // println!("{:#?}", tokens);
+        let result = super::parse_array(&tokens);
+        let array_var: crate::JsonExpr<'_> = result.unwrap().1;
+
+        assert_eq!(
+            array_var,
+            JsonExpr::Array(vec![JsonExpr::String("abc"), JsonExpr::String("def"),])
+        );
     }
 }
