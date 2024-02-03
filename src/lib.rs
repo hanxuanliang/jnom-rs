@@ -4,7 +4,11 @@ use std::ops::Range;
 use error::JError;
 use indexmap::IndexMap;
 use logos::{Lexer, Logos};
-use nom::{multi::separated_list0, sequence::tuple, Slice};
+use nom::{
+    multi::separated_list0,
+    sequence::{delimited, tuple},
+    Slice,
+};
 
 mod error;
 
@@ -135,6 +139,32 @@ enum JsonExpr<'a> {
     Null,
 }
 
+fn parse_obj(i: Input) -> IResult<JsonExpr> {
+    delimited(
+        match_token(JsonTokenKind::OpenBrace),
+        separated_list0(
+            match_token(JsonTokenKind::Comma),
+            tuple((
+                parse_string,
+                match_token(JsonTokenKind::Colon),
+                parse_string,
+            )),
+        ),
+        match_token(JsonTokenKind::CloseBrace),
+    )(i)
+    .map(|(i, map_var)| {
+        let out = map_var
+            .into_iter()
+            .map(|(k, _, v)| match k {
+                JsonExpr::String(k) => (k, v),
+                _ => unreachable!(),
+            })
+            .collect::<IndexMap<_, _>>();
+
+        (i, JsonExpr::Object(Box::new(out)))
+    })
+}
+
 fn parse_array(i: Input) -> IResult<JsonExpr> {
     tuple((
         match_token(JsonTokenKind::OpenBracket),
@@ -204,7 +234,7 @@ mod tests {
         let tokens = super::tokenize(source);
         // println!("{:#?}", tokens);
         let result = super::parse_string(&tokens);
-        let string_var: crate::JsonExpr<'_> = result.unwrap().1;
+        let string_var = result.unwrap().1;
         assert_eq!(string_var, JsonExpr::String("abc"));
     }
 
@@ -214,11 +244,22 @@ mod tests {
         let tokens = super::tokenize(source);
         // println!("{:#?}", tokens);
         let result = super::parse_array(&tokens);
-        let array_var: crate::JsonExpr<'_> = result.unwrap().1;
+        let array_var = result.unwrap().1;
 
         assert_eq!(
             array_var,
             JsonExpr::Array(vec![JsonExpr::String("abc"), JsonExpr::String("def"),])
         );
+    }
+
+    #[test]
+    fn it_parse_obj() {
+        let source = r#"{"name": "John Doe", "address": "杭州"}"#;
+        let tokens = super::tokenize(source);
+        // println!("{:#?}", tokens);
+        let result = super::parse_obj(&tokens);
+        // println!("{:#?}", result);
+        let obj_var = result.unwrap().1;
+        println!("{:#?}", obj_var);
     }
 }
