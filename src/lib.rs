@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use common::match_token;
 use error::JError;
 use indexmap::IndexMap;
 use nom::{
@@ -104,24 +105,6 @@ fn parse_bool(i: Input) -> IResult<JsonExpr> {
     ))(i)
 }
 
-fn match_token(kind: JsonTokenKind) -> impl Fn(Input) -> IResult<&JsonToken> {
-    move |i| match i.get(0).filter(|token| token.kind == kind) {
-        Some(token) => Ok((i.slice(1..), token)),
-        None => Err(nom::Err::Error(JError(format!(
-            "JsonToken Kind {kind} does not match",
-        )))),
-    }
-}
-
-fn match_text(text: &'static str) -> impl Fn(Input) -> IResult<&JsonToken> {
-    move |i| match i.get(0).filter(|token| token.text() == text) {
-        Some(token) => Ok((i.slice(1..), token)),
-        None => Err(nom::Err::Error(JError(format!(
-            "Json Text {text} does not match",
-        )))),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::token::tokenize;
@@ -177,14 +160,18 @@ mod tests {
 
     #[test]
     fn it_parse_array() {
-        let source = r#"["abc", "def"]"#;
+        let source = r#"["abc", "def", 1]"#;
         let tokens = tokenize(source);
         let result = super::parse_array(&tokens);
         let array_var = result.unwrap().1;
 
         assert_eq!(
             array_var,
-            JsonExpr::Array(vec![JsonExpr::String("abc"), JsonExpr::String("def"),])
+            JsonExpr::Array(vec![
+                JsonExpr::String("abc"),
+                JsonExpr::String("def"),
+                JsonExpr::Number(1.0),
+            ])
         );
     }
 
@@ -212,7 +199,10 @@ mod tests {
     fn it_parse_nest_obj() {
         let source = r#"
             {
-                "name": "John Doe", 
+                "name": "John Doe",
+                "age": 30,
+                "isStudent": false,
+                "scores": [100, 90, 95],
                 "address": {"city": "Springfield", "state": [1, 12]}
             }"#;
         let tokens = tokenize(source);
@@ -224,6 +214,16 @@ mod tests {
             JsonExpr::Object(Box::new(
                 vec![
                     ("name", JsonExpr::String("John Doe")),
+                    ("age", JsonExpr::Number(30.0)),
+                    ("isStudent", JsonExpr::Boolean(false)),
+                    (
+                        "scores",
+                        JsonExpr::Array(vec![
+                            JsonExpr::Number(100.0),
+                            JsonExpr::Number(90.0),
+                            JsonExpr::Number(95.0),
+                        ])
+                    ),
                     (
                         "address",
                         JsonExpr::Object(Box::new(
