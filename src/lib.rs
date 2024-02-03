@@ -6,6 +6,7 @@ use indexmap::IndexMap;
 use logos::{Lexer, Logos};
 use nom::{
     branch::alt,
+    combinator::map,
     multi::separated_list0,
     sequence::{delimited, tuple},
     Slice,
@@ -141,7 +142,13 @@ enum JsonExpr<'a> {
 }
 
 fn parse_json(i: Input) -> IResult<JsonExpr> {
-    alt((parse_obj, parse_array, parse_string))(i)
+    alt((
+        parse_obj,
+        parse_array,
+        parse_string,
+        parse_number,
+        parse_bool,
+    ))(i)
 }
 
 fn parse_obj(i: Input) -> IResult<JsonExpr> {
@@ -169,7 +176,7 @@ fn parse_obj(i: Input) -> IResult<JsonExpr> {
 fn parse_array(i: Input) -> IResult<JsonExpr> {
     tuple((
         match_token(JsonTokenKind::OpenBracket),
-        separated_list0(match_token(JsonTokenKind::Comma), parse_string),
+        separated_list0(match_token(JsonTokenKind::Comma), parse_json),
         match_token(JsonTokenKind::CloseBracket),
     ))(i)
     .map(|(i, (_, array_var, _))| (i, JsonExpr::Array(array_var)))
@@ -185,6 +192,29 @@ fn parse_string(i: Input) -> IResult<JsonExpr> {
             "JsonToken Kind String does not match"
         )))),
     }
+}
+
+fn parse_number(i: Input) -> IResult<JsonExpr> {
+    match i.get(0) {
+        Some(JsonToken {
+            kind: JsonTokenKind::Number(n),
+            ..
+        }) => Ok((i.slice(1..), JsonExpr::Number(*n))),
+        _ => Err(nom::Err::Error(JError(format!(
+            "JsonToken Kind Number does not match"
+        )))),
+    }
+}
+
+fn parse_bool(i: Input) -> IResult<JsonExpr> {
+    alt((
+        map(match_token(JsonTokenKind::True), |_| {
+            JsonExpr::Boolean(true)
+        }),
+        map(match_token(JsonTokenKind::False), |_| {
+            JsonExpr::Boolean(false)
+        }),
+    ))(i)
 }
 
 fn match_token(kind: JsonTokenKind) -> impl Fn(Input) -> IResult<&JsonToken> {
@@ -240,6 +270,26 @@ mod tests {
     }
 
     #[test]
+    fn it_parse_number() {
+        let source = "123";
+        let tokens = super::tokenize(source);
+        // println!("{:#?}", tokens);
+        let result = super::parse_number(&tokens);
+        let number_var = result.unwrap().1;
+        assert_eq!(number_var, JsonExpr::Number(123.0));
+    }
+
+    #[test]
+    fn it_parse_bool() {
+        let source = "true";
+        let tokens = super::tokenize(source);
+        // println!("{:#?}", tokens);
+        let result = super::parse_bool(&tokens);
+        let bool_var = result.unwrap().1;
+        assert_eq!(bool_var, JsonExpr::Boolean(true));
+    }
+
+    #[test]
     fn it_parse_array() {
         let source = r#"["abc", "def"]"#;
         let tokens = super::tokenize(source);
@@ -279,7 +329,7 @@ mod tests {
         let source = r#"
             {
                 "name": "John Doe", 
-                "address": {"city": "Springfield", "state": "IL"}
+                "address": {"city": "Springfield", "state": [1, 12]}
             }"#;
         let tokens = super::tokenize(source);
         // println!("{:#?}", tokens);
