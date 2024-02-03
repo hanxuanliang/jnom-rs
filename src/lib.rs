@@ -5,6 +5,7 @@ use error::JError;
 use indexmap::IndexMap;
 use logos::{Lexer, Logos};
 use nom::{
+    branch::alt,
     multi::separated_list0,
     sequence::{delimited, tuple},
     Slice,
@@ -139,16 +140,16 @@ enum JsonExpr<'a> {
     Null,
 }
 
+fn parse_json(i: Input) -> IResult<JsonExpr> {
+    alt((parse_obj, parse_array, parse_string))(i)
+}
+
 fn parse_obj(i: Input) -> IResult<JsonExpr> {
     delimited(
         match_token(JsonTokenKind::OpenBrace),
         separated_list0(
             match_token(JsonTokenKind::Comma),
-            tuple((
-                parse_string,
-                match_token(JsonTokenKind::Colon),
-                parse_string,
-            )),
+            tuple((parse_string, match_token(JsonTokenKind::Colon), parse_json)),
         ),
         match_token(JsonTokenKind::CloseBrace),
     )(i)
@@ -255,6 +256,31 @@ mod tests {
     #[test]
     fn it_parse_obj() {
         let source = r#"{"name": "John Doe", "address": "杭州"}"#;
+        let tokens = super::tokenize(source);
+        // println!("{:#?}", tokens);
+        let result = super::parse_obj(&tokens);
+        // println!("{:#?}", result);
+        let obj_var = result.unwrap().1;
+        assert_eq!(
+            obj_var,
+            JsonExpr::Object(Box::new(
+                vec![
+                    ("name", JsonExpr::String("John Doe")),
+                    ("address", JsonExpr::String("杭州")),
+                ]
+                .into_iter()
+                .collect()
+            ))
+        );
+    }
+
+    #[test]
+    fn it_parse_nest_obj() {
+        let source = r#"
+            {
+                "name": "John Doe", 
+                "address": {"city": "Springfield", "state": "IL"}
+            }"#;
         let tokens = super::tokenize(source);
         // println!("{:#?}", tokens);
         let result = super::parse_obj(&tokens);
