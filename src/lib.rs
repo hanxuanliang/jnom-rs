@@ -1,7 +1,12 @@
 #![allow(dead_code)]
 use std::ops::Range;
 
+use error::JError;
+use indexmap::IndexMap;
 use logos::{Lexer, Logos};
+use nom::Slice;
+
+mod error;
 
 pub struct JsonLexer<'a> {
     source: &'a str,
@@ -10,7 +15,7 @@ pub struct JsonLexer<'a> {
 
 pub struct JsonToken<'a> {
     source: &'a str,
-    kind: JsonTokenKind,
+    pub kind: JsonTokenKind,
     at: &'a str,
     span: Range<usize>,
 }
@@ -47,7 +52,6 @@ impl<'a> Iterator for JsonLexer<'a> {
     type Item = JsonToken<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        println!("{:?}", self.lexer.slice());
         match self.lexer.next() {
             Some(Ok(token)) => Some(JsonToken {
                 source: self.source,
@@ -118,6 +122,49 @@ impl std::fmt::Display for JsonTokenKind {
     }
 }
 
+pub type Input<'a> = &'a [JsonToken<'a>];
+pub type IResult<'a, Output> = nom::IResult<Input<'a>, Output, error::JError>;
+
+#[derive(Debug)]
+enum JsonExpr<'a> {
+    Object(Box<IndexMap<&'a str, JsonExpr<'a>>>),
+    Array(Vec<JsonExpr<'a>>),
+    String(&'a str),
+    Number(f64),
+    Boolean(bool),
+    Null,
+}
+
+fn parse_string(i: Input) -> IResult<JsonExpr> {
+    match i.get(0) {
+        Some(JsonToken {
+            kind: JsonTokenKind::String(s),
+            ..
+        }) => Ok((i.slice(1..), JsonExpr::String(s.trim_matches('"')))),
+        _ => Err(nom::Err::Error(JError(format!(
+            "JsonToken Kind String does not match"
+        )))),
+    }
+}
+
+fn match_token(kind: JsonTokenKind) -> impl Fn(Input) -> IResult<&JsonToken> {
+    move |i| match i.get(0).filter(|token| token.kind == kind) {
+        Some(token) => Ok((i.slice(1..), token)),
+        None => Err(nom::Err::Error(JError(format!(
+            "JsonToken Kind {kind} does not match",
+        )))),
+    }
+}
+
+fn match_text(text: &'static str) -> impl Fn(Input) -> IResult<&JsonToken> {
+    move |i| match i.get(0).filter(|token| token.text() == text) {
+        Some(token) => Ok((i.slice(1..), token)),
+        None => Err(nom::Err::Error(JError(format!(
+            "Json Text {text} does not match",
+        )))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -138,5 +185,14 @@ mod tests {
         "#;
         let tokens = super::tokenize(source);
         println!("{:#?}", tokens);
+    }
+
+    #[test]
+    fn it_parse_string() {
+        let source = "\"abc\"";
+        let tokens = super::tokenize(source);
+        // println!("{:#?}", tokens);
+        let result = super::parse_string(&tokens);
+        println!("{:#?}", result.unwrap().1);
     }
 }
